@@ -2,10 +2,17 @@
 
 .PHONY: help dev test build run lint fmt clean install
 
+# Load environment variables from .env file if it exists
+ifneq (,$(wildcard .env))
+    include .env
+    export
+endif
+
 # Default target
 help:
 	@echo "Available targets:"
 	@echo "  dev              - Run development server with hot reload"
+	@echo "  dev-dry          - Run development server in DRY_RUN mode"
 	@echo "  test             - Run unit tests"
 	@echo "  test-integration - Run integration tests"
 	@echo "  test-full        - Run all tests (unit + integration)"
@@ -23,6 +30,10 @@ help:
 # Development server
 dev:
 	@echo "Starting development server..."
+	UVICORN_RELOAD=1 python -m uvicorn app:app --host 0.0.0.0 --port 8080 --reload
+
+dev-dry:
+	@echo "Starting development server in DRY_RUN mode..."
 	UVICORN_RELOAD=1 DRY_RUN=true python -m uvicorn app:app --host 0.0.0.0 --port 8080 --reload
 
 # Run tests
@@ -40,10 +51,9 @@ run:
 	@echo "Running Docker container..."
 	docker run -d \
 		--name audit-agent \
-		-p 8080:8080 \
-		-v $(PWD)/data:/app/data \
-		-v $(PWD)/state:/app/state \
+		-p 8081:8080 \
 		-e OPENROUTER_API_KEY=$(OPENROUTER_API_KEY) \
+		-e OPENROUTER_MODEL=$(OPENROUTER_MODEL) \
 		-e DRY_RUN=false \
 		audit-agent:latest
 
@@ -53,8 +63,6 @@ run-dry:
 	docker run -d \
 		--name audit-agent-dry \
 		-p 8080:8080 \
-		-v $(PWD)/data:/app/data \
-		-v $(PWD)/state:/app/state \
 		-e DRY_RUN=true \
 		audit-agent:latest
 

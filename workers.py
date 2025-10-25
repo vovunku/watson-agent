@@ -153,13 +153,17 @@ class JobWorker:
         report_content, metrics = await llm_client.analyze_code(
             source_code, audit_profile, job.job_id, payload
         )
+        
+        logger.info(f"Job {job.job_id}: LLM returned content length: {len(report_content)}, first 100 chars: {report_content[:100]}")
 
         # Check for cancellation
         if self._check_cancel_flag(job.job_id, repo):
             return
 
-        # Update metrics
+        # Store the report content and metrics for later use
         repo.update_job_metrics(job.job_id, metrics)
+        # Store report content in a temporary field (we'll use report_path later)
+        repo.update_job_status(job.job_id, "running", error_message=report_content)
 
         logger.info(f"Job {job.job_id}: LLM phase completed")
 
@@ -175,12 +179,22 @@ class JobWorker:
         if self._check_cancel_flag(job.job_id, repo):
             return
 
-        # Generate final report
-        source_code = await self._fetch_source_code(payload["source"])
-        audit_profile = payload.get("audit_profile", "general_v1")
-        report_content, metrics = await llm_client.analyze_code(
-            source_code, audit_profile, job.job_id, payload
-        )
+        # Get the report content and metrics from the LLM phase
+        current_job = repo.get_job(job.job_id)
+        if not current_job or not current_job.metrics_json:
+            logger.error(f"Job {job.job_id} missing metrics from LLM phase")
+            return
+        
+        # Parse metrics from the LLM phase
+        import json
+        metrics = json.loads(current_job.metrics_json)
+        
+        # Get the report content from the LLM phase (stored in error_message temporarily)
+        report_content = current_job.error_message
+        logger.info(f"Job {job.job_id}: Retrieved report content from LLM phase, length: {len(report_content) if report_content else 0}")
+        if not report_content:
+            logger.error(f"Job {job.job_id} missing report content from LLM phase")
+            return
 
         # Check for cancellation
         if self._check_cancel_flag(job.job_id, repo):

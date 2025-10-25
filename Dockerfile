@@ -25,7 +25,7 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser
 # Set work directory
 WORKDIR /app
 
-# Create necessary directories
+# Create necessary directories with proper permissions
 RUN mkdir -p /app/state /app/data && \
     chown -R appuser:appuser /app
 

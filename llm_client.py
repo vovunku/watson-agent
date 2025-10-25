@@ -118,7 +118,7 @@ class LLMClient:
                 elapsed = time.time() - start_time
 
                 if response.status_code == 200:
-                    data = await response.json()
+                    data = response.json()
                     content = data["choices"][0]["message"]["content"]
 
                     # Extract usage metrics
