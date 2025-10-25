@@ -89,7 +89,8 @@ class TestLLMClient:
         with patch.object(llm_client_real.client, "post") as mock_post:
             mock_response = AsyncMock()
             mock_response.status_code = 200
-            mock_response.json = AsyncMock(return_value=mock_response_data)
+            # Mock json() as a synchronous method that returns the data directly
+            mock_response.json = lambda: mock_response_data
             mock_post.return_value = mock_response
 
             report, metrics = await llm_client_real.analyze_code(
@@ -126,12 +127,12 @@ class TestLLMClient:
             # Second call returns success
             success_response = AsyncMock()
             success_response.status_code = 200
-            success_response.json = AsyncMock(
-                return_value={
-                    "choices": [{"message": {"content": "Success after retry"}}],
-                    "usage": {"prompt_tokens": 50, "completion_tokens": 100},
-                }
-            )
+            success_response_data = {
+                "choices": [{"message": {"content": "Success after retry"}}],
+                "usage": {"prompt_tokens": 50, "completion_tokens": 100},
+            }
+            # Mock json() as a synchronous method that returns the data directly
+            success_response.json = lambda: success_response_data
 
             mock_post.side_effect = [rate_limit_response, success_response]
 
