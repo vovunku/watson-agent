@@ -119,7 +119,7 @@ def main():
         """
 
         job = client.create_job(
-            source_code=simple_contract,
+            source_code="Contract address on eth 0xdAC17F958D2ee523a2206206994597C13D831ec7",
             audit_profile="erc20_basic_v1",
             idempotency_key=f"python-demo-simple-{int(time.time())}",
         )

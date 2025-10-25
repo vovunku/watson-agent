@@ -59,17 +59,16 @@ DEFAULT_MCP_SERVERS = [
     MCPServerConfig(
         name="blockscout",
         transport="http",
-        url="https://mcp.blockscout.example",
-        token_env="BLOCKSCOUT_TOKEN",
+        url="https://mcp.blockscout.com/mcp",
         priority=10,
-        enabled=False,  # Disabled by default, enable when server is available
+        enabled=True,
     ),
     MCPServerConfig(
-        name="blockscout",
+        name="foundry",
         transport="http",
-        url="https://110c01412b44.ngrok-free.app/mcp",
+        url="https://b103bb987957.ngrok-free.app/mcp",
         priority=10,
-        enabled=True,  # Disabled by default, enable when server is available
+        enabled=True,
     ),
     MCPServerConfig(
         name="github",
@@ -93,6 +92,13 @@ DEFAULT_MCP_SERVERS = [
         token_env="WEBSEARCH_TOKEN",
         priority=2,
         enabled=False,
+    ),
+    MCPServerConfig(
+        name="http_audit_server",
+        transport="http",
+        url="http://localhost:8001",
+        priority=1,
+        enabled=False,  # Enable for testing with local HTTP server
     ),
 ]
 

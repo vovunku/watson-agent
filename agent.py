@@ -5,7 +5,7 @@ import asyncio
 from typing import Dict, List, Any, Optional, TypedDict, Annotated
 from datetime import datetime
 
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
@@ -35,10 +35,11 @@ class AgentState(TypedDict):
 class MCPToolWrapper(BaseTool):
     """Wrapper to convert MCP tools to LangChain tools."""
     
+    # Pydantic fields
+    tool_info: Dict[str, Any]
+    mcp_manager: MCPManager
+    
     def __init__(self, tool_info: Dict[str, Any], mcp_manager: MCPManager):
-        self.tool_info = tool_info
-        self.mcp_manager = mcp_manager
-        
         # Extract tool details
         name = tool_info["name"]
         description = tool_info.get("description", f"MCP tool: {name}")
@@ -48,6 +49,8 @@ class MCPToolWrapper(BaseTool):
             name=f"{server}_{name}",
             description=f"[{server}] {description}",
             args_schema=None,  # We'll handle this dynamically
+            tool_info=tool_info,
+            mcp_manager=mcp_manager,
         )
     
     def _run(self, **kwargs) -> str:
@@ -57,10 +60,12 @@ class MCPToolWrapper(BaseTool):
     async def _arun(self, **kwargs) -> str:
         """Async run method."""
         try:
-            # Call the MCP tool
+            # Call the MCP tool with server info
+            server = self.tool_info.get("server")
             result = await self.mcp_manager.call_tool(
                 self.tool_info["name"], 
-                kwargs
+                kwargs,
+                server=server
             )
             
             # Format the result
@@ -109,21 +114,33 @@ class AuditAgent:
     
     def _create_llm(self):
         """Create the LLM instance based on configuration."""
+        import os
         model_name = self.agent_config.model
+        api_key = self._get_api_key()
         
-        if "anthropic" in model_name.lower():
+        # Если это OpenRouter (часто содержит '/') или есть OPENROUTER_API_KEY, используем OpenAI-совместимый клиент
+        if "/" in model_name or os.getenv("OPENROUTER_API_KEY"):
+            return ChatOpenAI(
+                model=model_name,
+                temperature=self.agent_config.temperature,
+                max_tokens=self.agent_config.max_tokens,
+                api_key=api_key,
+                base_url="https://openrouter.ai/api/v1",
+            )
+        # Иначе – прямые SDK, как было
+        elif "anthropic" in model_name.lower():
             return ChatAnthropic(
                 model=model_name,
                 temperature=self.agent_config.temperature,
                 max_tokens=self.agent_config.max_tokens,
-                api_key=self._get_api_key(),
+                api_key=api_key,
             )
         elif "openai" in model_name.lower() or "gpt" in model_name.lower():
             return ChatOpenAI(
                 model=model_name,
                 temperature=self.agent_config.temperature,
                 max_tokens=self.agent_config.max_tokens,
-                api_key=self._get_api_key(),
+                api_key=api_key,
             )
         else:
             # Default to OpenAI-compatible
@@ -131,7 +148,7 @@ class AuditAgent:
                 model=model_name,
                 temperature=self.agent_config.temperature,
                 max_tokens=self.agent_config.max_tokens,
-                api_key=self._get_api_key(),
+                api_key=api_key,
                 base_url="https://openrouter.ai/api/v1",
             )
     
@@ -173,12 +190,15 @@ class AuditAgent:
             except Exception as e:
                 logger.error(f"Failed to create tool wrapper for {tool_info['name']}: {e}")
         
-        # Create tool node
+        # Create tool node and bind tools to LLM
         if self.tools:
             self.tool_node = ToolNode(self.tools)
-            logger.info(f"Setup {len(self.tools)} MCP tools")
+            # ВАЖНО: Привязываем инструменты к LLM
+            self.llm_with_tools = self.llm.bind_tools(self.tools)
+            logger.info(f"Setup {len(self.tools)} MCP tools and bound to LLM")
         else:
             logger.warning("No MCP tools available")
+            self.llm_with_tools = self.llm
     
     def _create_graph(self):
         """Create the LangGraph state graph."""
@@ -252,8 +272,8 @@ class AuditAgent:
         llm_messages = [system_message] + messages
         
         try:
-            # Get response from LLM
-            response = await self.llm.ainvoke(llm_messages)
+            # Get response from LLM with tools
+            response = await self.llm_with_tools.ainvoke(llm_messages)
             
             # Add AI message to state
             messages.append(response)
@@ -344,7 +364,7 @@ REPORT FORMAT:
 
 Be thorough, accurate, and provide actionable recommendations."""
 
-        return HumanMessage(content=system_prompt)
+        return SystemMessage(content=system_prompt)
     
     def _should_continue(self, state: AgentState) -> str:
         """Decide whether to continue or end."""

@@ -2,16 +2,238 @@
 
 import asyncio
 import os
-import subprocess
-from typing import Dict, List, Optional, Any, Tuple
-from contextlib import asynccontextmanager
+from typing import Dict, List, Optional, Any
 
-import httpx
 from loguru import logger
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import create_mcp_http_client
 
 from mcp_config import MCPConfig, MCPServerConfig
+
+
+class MockHTTPSession:
+    """Mock MCP session for HTTP transport."""
+    
+    def __init__(self, base_url: str, http_client):
+        self.base_url = base_url.rstrip('/')
+        self.http_client = http_client
+    
+    async def initialize(self):
+        """Initialize the session."""
+        pass
+    
+    async def list_tools(self):
+        """List available tools using JSON-RPC."""
+        try:
+            # JSON-RPC request for tools/list
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+                "params": {}
+            }
+            
+            response = await self.http_client.post(
+                self.base_url,
+                json=payload,
+                headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+            )
+            
+            if response.status_code == 200:
+                # Handle Server-Sent Events (SSE) response
+                content = response.text
+                logger.info(f"Response content from {self.base_url}: {content[:200]}...")
+                
+                if "event: message" in content and "data: " in content:
+                    # Extract JSON from SSE format
+                    lines = content.split('\n')
+                    json_str = None
+                    for line in lines:
+                        if line.startswith("data: "):
+                            json_str = line[6:]  # Remove "data: " prefix
+                            break
+                    
+                    if json_str:
+                        logger.info(f"Extracted JSON string: {json_str[:100]}...")
+                        try:
+                            import json
+                            data = json.loads(json_str)
+                            if "result" in data and "tools" in data["result"]:
+                                tools = []
+                                for tool_data in data["result"]["tools"]:
+                                    from mcp.types import Tool
+                                    tool = Tool(
+                                        name=tool_data["name"],
+                                        description=tool_data.get("description", ""),
+                                        inputSchema=tool_data.get("inputSchema", {})
+                                    )
+                                    tools.append(tool)
+                                logger.info(f"Found {len(tools)} tools from {self.base_url}")
+                                return type('ToolsResult', (), {'tools': tools})()
+                            else:
+                                logger.warning(f"No tools in response from {self.base_url}: {data}")
+                                return type('ToolsResult', (), {'tools': []})()
+                        except Exception as e:
+                            logger.error(f"Failed to parse SSE JSON from {self.base_url}: {e}")
+                            return type('ToolsResult', (), {'tools': []})()
+                    else:
+                        logger.warning(f"No data line found in SSE response from {self.base_url}")
+                        return type('ToolsResult', (), {'tools': []})()
+                else:
+                    # Regular JSON response
+                    data = response.json()
+                    if "result" in data and "tools" in data["result"]:
+                        tools = []
+                        for tool_data in data["result"]["tools"]:
+                            from mcp.types import Tool
+                            tool = Tool(
+                                name=tool_data["name"],
+                                description=tool_data.get("description", ""),
+                                inputSchema=tool_data.get("inputSchema", {})
+                            )
+                            tools.append(tool)
+                        logger.info(f"Found {len(tools)} tools from {self.base_url}")
+                        return type('ToolsResult', (), {'tools': tools})()
+                    else:
+                        logger.warning(f"No tools in response from {self.base_url}: {data}")
+                        return type('ToolsResult', (), {'tools': []})()
+            else:
+                logger.warning(f"HTTP {response.status_code} from {self.base_url}: {response.text}")
+                return type('ToolsResult', (), {'tools': []})()
+        except Exception as e:
+            logger.error(f"Failed to list tools from {self.base_url}: {e}")
+            return type('ToolsResult', (), {'tools': []})()
+    
+    async def list_resources(self):
+        """List available resources using JSON-RPC."""
+        try:
+            # JSON-RPC request for resources/list
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "resources/list",
+                "params": {}
+            }
+            
+            response = await self.http_client.post(
+                self.base_url,
+                json=payload,
+                headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if "result" in data and "resources" in data["result"]:
+                    resources = []
+                    for resource_data in data["result"]["resources"]:
+                        from mcp.types import Resource
+                        resource = Resource(
+                            uri=resource_data["uri"],
+                            name=resource_data.get("name", ""),
+                            description=resource_data.get("description", ""),
+                            mimeType=resource_data.get("mimeType", "text/plain")
+                        )
+                        resources.append(resource)
+                    logger.info(f"Found {len(resources)} resources from {self.base_url}")
+                    return type('ResourcesResult', (), {'resources': resources})()
+                else:
+                    return type('ResourcesResult', (), {'resources': []})()
+            else:
+                return type('ResourcesResult', (), {'resources': []})()
+        except Exception as e:
+            logger.error(f"Failed to list resources from {self.base_url}: {e}")
+            return type('ResourcesResult', (), {'resources': []})()
+    
+    async def call_tool(self, name: str, arguments: Dict[str, Any]):
+        """Call a tool using JSON-RPC."""
+        try:
+            # JSON-RPC request for tools/call
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": name,
+                    "arguments": arguments
+                }
+            }
+            
+            response = await self.http_client.post(
+                self.base_url,
+                json=payload,
+                headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if "result" in data:
+                    from mcp.types import TextContent
+                    content = []
+                    for item in data["result"].get("content", []):
+                        if item.get("type") == "text":
+                            content.append(TextContent(type="text", text=item["text"]))
+                    return type('ToolResult', (), {
+                        'content': content,
+                        'isError': data["result"].get("isError", False)
+                    })()
+                else:
+                    from mcp.types import TextContent
+                    return type('ToolResult', (), {
+                        'content': [TextContent(type="text", text=f"Error in response: {data}")],
+                        'isError': True
+                    })()
+            else:
+                from mcp.types import TextContent
+                return type('ToolResult', (), {
+                    'content': [TextContent(type="text", text=f"HTTP {response.status_code}: {response.text}")],
+                    'isError': True
+                })()
+        except Exception as e:
+            from mcp.types import TextContent
+            return type('ToolResult', (), {
+                'content': [TextContent(type="text", text=f"Error: {str(e)}")],
+                'isError': True
+            })()
+    
+    async def close(self):
+        """Close the session."""
+        await self.http_client.aclose()
+
+
+def convert_mcp_tool_to_langchain(tool_info: Dict[str, Any], session: ClientSession) -> Any:
+    """Convert MCP tool to LangChain tool."""
+    from langchain_core.tools import BaseTool
+    from typing import Dict, Any
+    
+    class MCPLangChainTool(BaseTool):
+        name: str = tool_info["name"]
+        description: str = tool_info.get("description", "")
+        args_schema: Optional[Any] = None
+        
+        def __init__(self, tool_info: Dict[str, Any], session: ClientSession):
+            super().__init__()
+            self.tool_info = tool_info
+            self.session = session
+            self.name = tool_info["name"]
+            self.description = tool_info.get("description", "")
+        
+        def _run(self, **kwargs) -> str:
+            """Synchronous version - not supported for MCP tools."""
+            raise NotImplementedError("MCP tools require async execution")
+        
+        async def _arun(self, **kwargs) -> str:
+            """Asynchronous execution of the MCP tool."""
+            try:
+                result = await self.session.call_tool(self.name, kwargs)
+                if result.isError:
+                    return f"Error: {result.content[0].text if result.content else 'Unknown error'}"
+                else:
+                    return result.content[0].text if result.content else "No output"
+            except Exception as e:
+                return f"Error calling tool {self.name}: {str(e)}"
+    
+    return MCPLangChainTool(tool_info, session)
 
 
 class MCPServerConnection:
@@ -81,32 +303,40 @@ class MCPServerConnection:
     async def _connect_http(self):
         """Connect via HTTP transport."""
         if not self.config.url:
-            raise ValueError("http transport requires url configuration")
+            raise ValueError("HTTP transport requires url configuration")
         
-        # For HTTP transport, we'll use httpx client
-        # This is a simplified implementation
-        headers = self.config.headers or {}
+        # Объединяем config.headers и Authorization
+        headers = dict(getattr(self.config, 'headers', {}) or {})
         
+        # Get authentication token if needed
         if self.config.token_env:
             token = os.getenv(self.config.token_env)
             if token:
-                headers["Authorization"] = f"Bearer {token}"
+                headers.setdefault("Authorization", f"Bearer {token}")
+            else:
+                logger.warning(f"No token found for {self.config.name} in {self.config.token_env}")
         
-        # Create HTTP client session
-        async with httpx.AsyncClient(
-            base_url=self.config.url,
-            headers=headers,
-            timeout=self.config.timeout
-        ) as client:
-            # Test connection
-            response = await client.get("/health")
-            if response.status_code != 200:
-                raise Exception(f"Health check failed: {response.status_code}")
+        # Create HTTP client using official MCP library
+        http_client = create_mcp_http_client(headers=headers)
         
-        # For now, create a mock session for HTTP
-        # In a real implementation, you'd create an HTTP-based MCP client
-        self.session = None  # Placeholder for HTTP MCP client
-        logger.warning(f"HTTP transport for {self.config.name} not fully implemented")
+        # Test connection by making a request to the MCP server
+        try:
+            # Try to connect to the MCP server
+            response = await http_client.get(f"{self.config.url}/health")
+            if response.status_code not in [200, 404]:  # 404 is OK if no health endpoint
+                raise Exception(f"Connection test failed: {response.status_code}")
+            
+            logger.info(f"Successfully connected to HTTP MCP server: {self.config.name}")
+        except Exception as e:
+            logger.error(f"Failed to connect to HTTP MCP server {self.config.name}: {e}")
+            raise
+        
+        # For now, we'll create a mock session that implements the MCP interface
+        # In a real implementation, you'd need to implement the full MCP protocol over HTTP
+        self.session = MockHTTPSession(str(self.config.url), http_client)
+        
+        # List available tools and resources
+        await self._list_capabilities()
     
     async def _connect_sse(self):
         """Connect via SSE transport."""
@@ -246,23 +476,32 @@ class MCPManager:
             
             # Add tools with server prefix
             for tool in connection.tools:
-                tool_with_server = tool.copy()
-                tool_with_server["server"] = server_name
-                tool_with_server["priority"] = connection.config.priority
-                self.all_tools.append(tool_with_server)
+                # Convert Tool object to dict and add server info
+                tool_dict = tool.model_dump() if hasattr(tool, 'model_dump') else tool.__dict__
+                tool_dict["server"] = server_name
+                tool_dict["priority"] = connection.config.priority
+                self.all_tools.append(tool_dict)
             
             # Add resources with server prefix
             for resource in connection.resources:
-                resource_with_server = resource.copy()
-                resource_with_server["server"] = server_name
-                self.all_resources.append(resource_with_server)
+                # Convert Resource object to dict and add server info
+                resource_dict = resource.model_dump() if hasattr(resource, 'model_dump') else resource.__dict__
+                resource_dict["server"] = server_name
+                self.all_resources.append(resource_dict)
         
         # Sort tools by priority (higher priority first)
         self.all_tools.sort(key=lambda x: x.get("priority", 0), reverse=True)
     
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def call_tool(self, tool_name: str, arguments: Dict[str, Any], server: Optional[str] = None) -> Dict[str, Any]:
         """Call a tool by name, finding the appropriate server."""
-        # Find the tool and its server
+        if server:
+            # Строгий выбор по серверу
+            if server not in self.connected_servers:
+                raise Exception(f"Server '{server}' is not connected")
+            connection = self.servers[server]
+            return await connection.call_tool(tool_name, arguments)
+        
+        # Старое поведение (по имени/приоритету), если server не указан
         tool_info = None
         for tool in self.all_tools:
             if tool["name"] == tool_name:
@@ -286,6 +525,25 @@ class MCPManager:
     def get_available_resources(self) -> List[Dict[str, Any]]:
         """Get list of all available resources."""
         return self.all_resources.copy()
+    
+    def get_langchain_tools(self) -> List[Any]:
+        """Get all MCP tools converted to LangChain tools."""
+        langchain_tools = []
+        
+        for tool_info in self.all_tools:
+            try:
+                # Convert MCP tool to LangChain tool
+                langchain_tool = convert_mcp_tool_to_langchain(
+                    tool_info, 
+                    self.servers[tool_info["server"]].session
+                )
+                langchain_tools.append(langchain_tool)
+                logger.debug(f"Converted MCP tool '{tool_info['name']}' to LangChain tool")
+            except Exception as e:
+                logger.warning(f"Failed to convert MCP tool '{tool_info['name']}' to LangChain: {e}")
+        
+        logger.info(f"Converted {len(langchain_tools)} MCP tools to LangChain tools")
+        return langchain_tools
     
     async def shutdown(self):
         """Shutdown all MCP connections."""
