@@ -17,19 +17,11 @@ from models import Job
 @pytest.fixture(scope="session")
 def test_db_url():
     """Create temporary database URL for testing."""
-    # Create temporary database file
-    temp_db = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
-    temp_db.close()
-    
-    db_url = f"sqlite:///{temp_db.name}"
+    # Use in-memory SQLite database for better reliability in CI
+    # This avoids file permission issues in GitHub Actions
+    db_url = "sqlite:///:memory:"
     
     yield db_url
-    
-    # Cleanup
-    try:
-        os.unlink(temp_db.name)
-    except OSError:
-        pass
 
 
 @pytest.fixture(scope="session")
@@ -66,20 +58,34 @@ def test_db_session(test_engine):
 
 
 @pytest.fixture(scope="function")
-def test_client(test_db_session):
+def test_client(test_db_session, test_engine):
     """Create test client with database override."""
+    from fastapi import FastAPI
+    from app import app as original_app
+    
+    # Create a test app without lifespan to avoid database initialization
+    test_app = FastAPI(
+        title="Audit Agent Test",
+        description="Test version of audit agent",
+        version="1.0.0"
+    )
+    
+    # Copy all routes from original app
+    for route in original_app.routes:
+        test_app.routes.append(route)
+    
     def override_get_db():
         try:
             yield test_db_session
         finally:
             pass
     
-    app.dependency_overrides[get_db] = override_get_db
+    test_app.dependency_overrides[get_db] = override_get_db
     
-    with TestClient(app) as client:
+    with TestClient(test_app) as client:
         yield client
     
-    app.dependency_overrides.clear()
+    test_app.dependency_overrides.clear()
 
 
 @pytest.fixture
