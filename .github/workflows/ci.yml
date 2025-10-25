@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run unit tests
+      run: |
+        python -m pytest tests/ -v --tb=short
+    
+    - name: Build Docker image
+      run: |
+        docker build -t audit-agent:test .
+    
+    - name: Run integration tests
+      run: |
+        # Start the service in background
+        docker run -d --name audit-agent-test -p 8081:8080 -e DRY_RUN=true audit-agent:test
+        
+        # Wait for service to start
+        sleep 10
+        
+        # Check if service is healthy
+        curl -f http://localhost:8081/healthz || exit 1
+        
+        # Run integration tests
+        python test_integration.py --url http://localhost:8081
+        
+        # Cleanup
+        docker stop audit-agent-test
+        docker rm audit-agent-test
+    
+    - name: Test Docker health check
+      run: |
+        docker run -d --name audit-agent-health -p 8082:8080 -e DRY_RUN=true audit-agent:test
+        sleep 15
+        
+        # Test health check
+        curl -f http://localhost:8082/healthz || exit 1
+        
+        # Test basic API functionality
+        curl -f -X POST http://localhost:8082/jobs \
+          -H "Content-Type: application/json" \
+          -d '{"source":{"type":"inline","inline_code":"contract Test {}"},"audit_profile":"erc20_basic_v1","idempotency_key":"health-test"}' || exit 1
+        
+        docker stop audit-agent-health
+        docker rm audit-agent-health
+
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install linting dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install ruff black
+    
+    - name: Run ruff linter
+      run: |
+        ruff check . --output-format=github
+    
+    - name: Run black formatter check
+      run: |
+        black --check --diff .
