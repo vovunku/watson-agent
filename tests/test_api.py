@@ -3,6 +3,8 @@
 import json
 import pytest
 from fastapi.testclient import TestClient
+from models import Job
+from utils import get_current_timestamp
 
 
 class TestHealthEndpoint:
@@ -126,7 +128,7 @@ class TestJobReport:
     def test_get_job_report_success(self, test_client: TestClient, test_db_session):
         """Test getting report for completed job."""
         import json
-        from utils import get_current_timestamp, write_report_file
+        from utils import write_report_file
         from db import JobRepository
         
         # Create a completed job
@@ -189,7 +191,6 @@ class TestJobCancellation:
     def test_cancel_job_already_finished(self, test_client: TestClient, test_db_session):
         """Test cancelling already finished job."""
         import json
-        from utils import get_current_timestamp
         
         # Create a completed job
         job = Job(
