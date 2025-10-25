@@ -5,6 +5,8 @@ A smart contract audit agent with LLM integration, built with FastAPI and design
 ## Features
 
 - **HTTP API**: RESTful API for creating and managing audit jobs
+- **MCP Agent Integration**: LangGraph-based agent with ReAct pattern for intelligent tool use
+- **Multi-Server MCP Support**: Connect to multiple MCP servers (BlockScout, GitHub, Slither, etc.)
 - **LLM Integration**: OpenRouter API integration with fallback to DRY_RUN mode
 - **Job Scheduling**: Built-in scheduler with worker pool for parallel processing
 - **Database**: SQLite with SQLAlchemy and Alembic migrations
@@ -13,6 +15,33 @@ A smart contract audit agent with LLM integration, built with FastAPI and design
 - **Cancellation**: Job cancellation support
 - **Progress Tracking**: Real-time job progress and metrics
 - **Report Generation**: Detailed audit reports with file storage
+
+## MCP Agent Integration
+
+The audit agent now supports Model Context Protocol (MCP) for enhanced smart contract auditing capabilities:
+
+- **LangGraph Agent**: Uses ReAct pattern for intelligent tool selection and reasoning
+- **Multi-Server Support**: Connect to multiple MCP servers (BlockScout, GitHub, Slither, Mythril, etc.)
+- **Automatic Tool Discovery**: Tools are automatically discovered and made available to the agent
+- **Fallback Mechanisms**: Graceful fallback from MCP agent → Direct LLM → DRY_RUN mode
+- **Configurable**: Easy configuration of MCP servers and agent behavior
+
+For detailed MCP documentation, see [MCP_README.md](MCP_README.md).
+
+### Quick MCP Setup
+
+```bash
+# Enable MCP mode
+export ENABLE_MCP=true
+export MCP_FALLBACK_TO_DIRECT=true
+
+# Configure MCP servers (optional)
+export BLOCKSCOUT_API_KEY=your_key
+export GITHUB_TOKEN=your_token
+
+# Run with MCP support
+make run
+```
 
 ## Quick Start
 
