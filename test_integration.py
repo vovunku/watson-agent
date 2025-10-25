@@ -138,7 +138,11 @@ class AuditAgentTester:
             response = self.session.get(f"{self.base_url}/jobs/{job_id}/report")
             if response.status_code == 200:
                 content = response.text
-                if content and ("audit" in content.lower() or "analysis" in content.lower()) and len(content) > 100:
+                if (
+                    content
+                    and ("audit" in content.lower() or "analysis" in content.lower())
+                    and len(content) > 100
+                ):
                     print(
                         f"✅ Job report retrieved successfully ({len(content)} characters)"
                     )

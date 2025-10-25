@@ -153,8 +153,10 @@ class JobWorker:
         report_content, metrics = await llm_client.analyze_code(
             source_code, audit_profile, job.job_id, payload
         )
-        
-        logger.info(f"Job {job.job_id}: LLM returned content length: {len(report_content)}, first 100 chars: {report_content[:100]}")
+
+        logger.info(
+            f"Job {job.job_id}: LLM returned content length: {len(report_content)}, first 100 chars: {report_content[:100]}"
+        )
 
         # Check for cancellation
         if self._check_cancel_flag(job.job_id, repo):
@@ -184,14 +186,17 @@ class JobWorker:
         if not current_job or not current_job.metrics_json:
             logger.error(f"Job {job.job_id} missing metrics from LLM phase")
             return
-        
+
         # Parse metrics from the LLM phase
         import json
+
         metrics = json.loads(current_job.metrics_json)
-        
+
         # Get the report content from the LLM phase (stored in error_message temporarily)
         report_content = current_job.error_message
-        logger.info(f"Job {job.job_id}: Retrieved report content from LLM phase, length: {len(report_content) if report_content else 0}")
+        logger.info(
+            f"Job {job.job_id}: Retrieved report content from LLM phase, length: {len(report_content) if report_content else 0}"
+        )
         if not report_content:
             logger.error(f"Job {job.job_id} missing report content from LLM phase")
             return
