@@ -155,22 +155,24 @@ class AuditAgent:
     def _get_api_key(self) -> str:
         """Get API key for the LLM."""
         import os
-        
-        if "anthropic" in self.agent_config.model.lower():
-            api_key = os.getenv("ANTHROPIC_API_KEY", "")
-        elif "openai" in self.agent_config.model.lower():
-            api_key = os.getenv("OPENAI_API_KEY", "")
-        else:
-            # For OpenRouter (including deepseek, etc.)
+        name = self.agent_config.model.lower()
+
+        # Prefer OpenRouter if model looks like an OpenRouter namespace or the env var is set
+        if "/" in name or os.getenv("OPENROUTER_API_KEY"):
             api_key = os.getenv("OPENROUTER_API_KEY", "")
-        
-        if not api_key:
-            logger.warning(f"No API key found for model {self.agent_config.model}")
-            # Return a placeholder to avoid authentication errors
-            return "placeholder-key"
-        
-        logger.info(f"Using API key for model {self.agent_config.model}")
-        return api_key
+            if not api_key:
+                logger.warning("OPENROUTER_API_KEY is not set")
+                return "placeholder-key"
+            logger.info(f"Using OpenRouter API key for model {self.agent_config.model}")
+            return api_key
+
+        if "anthropic" in name:
+            api_key = os.getenv("ANTHROPIC_API_KEY", "")
+            return api_key or "placeholder-key"
+
+        # Native OpenAI (no OpenRouter)
+        api_key = os.getenv("OPENAI_API_KEY", "")
+        return api_key or "placeholder-key"
     
     def _setup_tools(self):
         """Setup MCP tools as LangChain tools."""

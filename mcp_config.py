@@ -63,43 +63,6 @@ DEFAULT_MCP_SERVERS = [
         priority=10,
         enabled=True,
     ),
-    MCPServerConfig(
-        name="foundry",
-        transport="http",
-        url="https://b103bb987957.ngrok-free.app/mcp",
-        priority=10,
-        enabled=True,
-    ),
-    MCPServerConfig(
-        name="github",
-        transport="stdio",
-        cmd=["python", "-m", "mcp_github_server"],
-        token_env="GITHUB_TOKEN",
-        priority=5,
-        enabled=False,
-    ),
-    MCPServerConfig(
-        name="filesystem",
-        transport="stdio",
-        cmd=["python", "-m", "mcp_filesystem_server"],
-        priority=3,
-        enabled=False,
-    ),
-    MCPServerConfig(
-        name="web_search",
-        transport="http",
-        url="https://mcp.websearch.example",
-        token_env="WEBSEARCH_TOKEN",
-        priority=2,
-        enabled=False,
-    ),
-    MCPServerConfig(
-        name="http_audit_server",
-        transport="http",
-        url="http://localhost:8001",
-        priority=1,
-        enabled=False,  # Enable for testing with local HTTP server
-    ),
 ]
 
 

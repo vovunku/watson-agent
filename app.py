@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from db import get_db, JobRepository, init_db, check_db_health
 from llm_client import llm_client
+from mcp_manager import get_mcp_manager
 from schemas import (
     CreateJobRequest,
     CreateJobResponse,
@@ -75,6 +76,24 @@ async def health_check():
     return HealthResponse(
         ok=db_healthy, db="ready" if db_healthy else "error", version=settings.version
     )
+
+
+@app.get("/debug/mcp")
+async def mcp_debug():
+    """Debug endpoint to inspect MCP tools and resources at runtime."""
+    mgr = await get_mcp_manager()
+    if not mgr:
+        return {"error": "MCP manager not initialized"}
+    
+    tools = mgr.get_available_tools()
+    resources = mgr.get_available_resources()
+    return {
+        "servers": mgr.connected_servers,
+        "tools": tools,
+        "resources": resources,
+        "tool_count": len(tools),
+        "resource_count": len(resources)
+    }
 
 
 @app.post(

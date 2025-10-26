@@ -18,181 +18,266 @@ class MockHTTPSession:
     def __init__(self, base_url: str, http_client):
         self.base_url = base_url.rstrip('/')
         self.http_client = http_client
+        self.initialized = False
     
     async def initialize(self):
-        """Initialize the session."""
-        pass
-    
-    async def list_tools(self):
-        """List available tools using JSON-RPC."""
+        """Perform MCP initialize over HTTP JSON-RPC."""
+        payload = {"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"capabilities": {}}}
         try:
-            # JSON-RPC request for tools/list
-            payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/list",
-                "params": {}
-            }
-            
-            response = await self.http_client.post(
+            # Try JSON first
+            resp = await self.http_client.post(
                 self.base_url,
                 json=payload,
                 headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
             )
+            if resp.status_code == 200 and resp.headers.get("content-type","").startswith("application/json"):
+                data = resp.json()
+                self.initialized = True
+                logger.info(f"Initialized MCP HTTP session at {self.base_url}")
+                return
+            elif resp.status_code != 200:
+                logger.warning(f"initialize {self.base_url} -> {resp.status_code} {resp.text[:300]}")
+                return
             
-            if response.status_code == 200:
-                # Handle Server-Sent Events (SSE) response
-                content = response.text
-                logger.info(f"Response content from {self.base_url}: {content[:200]}...")
-                
-                if "event: message" in content and "data: " in content:
-                    # Extract JSON from SSE format
-                    lines = content.split('\n')
-                    json_str = None
-                    for line in lines:
-                        if line.startswith("data: "):
-                            json_str = line[6:]  # Remove "data: " prefix
-                            break
-                    
-                    if json_str:
-                        logger.info(f"Extracted JSON string: {json_str[:100]}...")
+            # Handle SSE response
+            async with self.http_client.stream(
+                "POST", self.base_url,
+                json=payload,
+                headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+            ) as s:
+                buf = ""
+                async for chunk in s.aiter_text():
+                    buf += chunk
+                    for raw in buf.splitlines():
+                        line = raw.strip()
+                        if not line:
+                            continue
+                        # accept both "data: {...}" and plain "{...}"
+                        if line.startswith("data:"):
+                            line = line[5:].strip(": ").strip()
                         try:
-                            import json
-                            data = json.loads(json_str)
-                            if "result" in data and "tools" in data["result"]:
-                                tools = []
-                                for tool_data in data["result"]["tools"]:
-                                    from mcp.types import Tool
-                                    tool = Tool(
-                                        name=tool_data["name"],
-                                        description=tool_data.get("description", ""),
-                                        inputSchema=tool_data.get("inputSchema", {})
-                                    )
-                                    tools.append(tool)
-                                logger.info(f"Found {len(tools)} tools from {self.base_url}")
-                                return type('ToolsResult', (), {'tools': tools})()
-                            else:
-                                logger.warning(f"No tools in response from {self.base_url}: {data}")
-                                return type('ToolsResult', (), {'tools': []})()
-                        except Exception as e:
-                            logger.error(f"Failed to parse SSE JSON from {self.base_url}: {e}")
-                            return type('ToolsResult', (), {'tools': []})()
-                    else:
-                        logger.warning(f"No data line found in SSE response from {self.base_url}")
-                        return type('ToolsResult', (), {'tools': []})()
-                else:
-                    # Regular JSON response
-                    data = response.json()
-                    if "result" in data and "tools" in data["result"]:
-                        tools = []
-                        for tool_data in data["result"]["tools"]:
-                            from mcp.types import Tool
-                            tool = Tool(
-                                name=tool_data["name"],
-                                description=tool_data.get("description", ""),
-                                inputSchema=tool_data.get("inputSchema", {})
-                            )
-                            tools.append(tool)
-                        logger.info(f"Found {len(tools)} tools from {self.base_url}")
-                        return type('ToolsResult', (), {'tools': tools})()
-                    else:
-                        logger.warning(f"No tools in response from {self.base_url}: {data}")
-                        return type('ToolsResult', (), {'tools': []})()
-            else:
-                logger.warning(f"HTTP {response.status_code} from {self.base_url}: {response.text}")
+                            import json as _json
+                            data = _json.loads(line)
+                            # tolerate servers that omit result or return ack only
+                            self.initialized = True
+                            logger.info(f"Initialized MCP HTTP session at {self.base_url}")
+                            return
+                        except Exception:
+                            continue
+        except Exception as e:
+            logger.error(f"initialize failed for {self.base_url}: {e}")
+    
+    async def list_tools(self):
+        """List available tools using JSON-RPC with support for both JSON and SSE."""
+        payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+        url = self.base_url  # honor configured URL exactly
+
+        try:
+            # First try plain JSON
+            resp = await self.http_client.post(
+                url, json=payload,
+                headers={
+                    "Content-Type": "application/json", 
+                    "Accept": "application/json, text/event-stream",
+                    "User-Agent": "MCP-Client/1.0"
+                }
+            )
+            if resp.status_code == 200 and resp.headers.get("content-type","").startswith("application/json"):
+                data = resp.json()
+                parsed = self._parse_tools_json(data)
+                if not getattr(parsed, "tools", []):
+                    logger.warning(f"tools/list 200 but empty from {self.base_url}: {str(data)[:300]}")
+                return parsed
+
+            # Otherwise fall back to SSE streaming with robust parsing
+            async with self.http_client.stream(
+                "POST", url,
+                json=payload,
+                headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+            ) as s:
+                buf = ""
+                async for chunk in s.aiter_text():
+                    buf += chunk
+                    for raw in buf.splitlines():
+                        line = raw.strip()
+                        if not line:
+                            continue
+                        # accept both "data: {...}" and plain "{...}"
+                        if line.startswith("data:"):
+                            line = line[5:].strip(": ").strip()
+                        try:
+                            import json as _json
+                            data = _json.loads(line)
+                            result = self._parse_tools_json(data)
+                            if result and getattr(result, "tools", []):
+                                return result
+                        except Exception:
+                            continue
+                # if we got here, fall through to empty
                 return type('ToolsResult', (), {'tools': []})()
         except Exception as e:
             logger.error(f"Failed to list tools from {self.base_url}: {e}")
             return type('ToolsResult', (), {'tools': []})()
     
-    async def list_resources(self):
-        """List available resources using JSON-RPC."""
+    def _parse_tools_json(self, data):
+        """Parse tools from JSON response."""
         try:
-            # JSON-RPC request for resources/list
-            payload = {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "resources/list",
-                "params": {}
-            }
-            
-            response = await self.http_client.post(
-                self.base_url,
-                json=payload,
+            logger.debug(f"Parsing tools JSON from {self.base_url}: {str(data)[:500]}")
+            if "result" in data and "tools" in data["result"]:
+                from mcp.types import Tool
+                tools = [Tool(
+                    name=t["name"],
+                    description=t.get("description",""),
+                    inputSchema=t.get("inputSchema", {})
+                ) for t in data["result"]["tools"]]
+                logger.info(f"Found {len(tools)} tools from {self.base_url}")
+                return type('ToolsResult', (), {'tools': tools})()
+            else:
+                logger.warning(f"No tools in result from {self.base_url}: {str(data)[:300]}")
+        except Exception as e:
+            logger.warning(f"Bad tools payload from {self.base_url}: {e}")
+        return type('ToolsResult', (), {'tools': []})()
+    
+    async def list_resources(self):
+        """List available resources using JSON-RPC with support for both JSON and SSE."""
+        payload = {"jsonrpc": "2.0", "id": 2, "method": "resources/list", "params": {}}
+        url = self.base_url
+
+        try:
+            # First try plain JSON
+            resp = await self.http_client.post(
+                url, json=payload,
                 headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
             )
-            
-            if response.status_code == 200:
-                data = response.json()
-                if "result" in data and "resources" in data["result"]:
-                    resources = []
-                    for resource_data in data["result"]["resources"]:
-                        from mcp.types import Resource
-                        resource = Resource(
-                            uri=resource_data["uri"],
-                            name=resource_data.get("name", ""),
-                            description=resource_data.get("description", ""),
-                            mimeType=resource_data.get("mimeType", "text/plain")
-                        )
-                        resources.append(resource)
-                    logger.info(f"Found {len(resources)} resources from {self.base_url}")
-                    return type('ResourcesResult', (), {'resources': resources})()
-                else:
-                    return type('ResourcesResult', (), {'resources': []})()
-            else:
+            if resp.status_code == 200 and resp.headers.get("content-type","").startswith("application/json"):
+                data = resp.json()
+                parsed = self._parse_resources_json(data)
+                if not getattr(parsed, "resources", []):
+                    logger.warning(f"resources/list 200 but empty from {self.base_url}: {str(data)[:300]}")
+                return parsed
+
+            # Otherwise fall back to SSE streaming with robust parsing
+            async with self.http_client.stream(
+                "POST", url,
+                json=payload,
+                headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+            ) as s:
+                buf = ""
+                async for chunk in s.aiter_text():
+                    buf += chunk
+                    for raw in buf.splitlines():
+                        line = raw.strip()
+                        if not line:
+                            continue
+                        # accept both "data: {...}" and plain "{...}"
+                        if line.startswith("data:"):
+                            line = line[5:].strip(": ").strip()
+                        try:
+                            import json as _json
+                            data = _json.loads(line)
+                            result = self._parse_resources_json(data)
+                            if result and getattr(result, "resources", []):
+                                return result
+                        except Exception:
+                            continue
                 return type('ResourcesResult', (), {'resources': []})()
         except Exception as e:
             logger.error(f"Failed to list resources from {self.base_url}: {e}")
             return type('ResourcesResult', (), {'resources': []})()
     
-    async def call_tool(self, name: str, arguments: Dict[str, Any]):
-        """Call a tool using JSON-RPC."""
+    def _parse_resources_json(self, data):
+        """Parse resources from JSON response."""
         try:
-            # JSON-RPC request for tools/call
-            payload = {
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/call",
-                "params": {
-                    "name": name,
-                    "arguments": arguments
-                }
-            }
-            
-            response = await self.http_client.post(
-                self.base_url,
-                json=payload,
+            if "result" in data and "resources" in data["result"]:
+                from mcp.types import Resource
+                resources = [Resource(
+                    uri=r["uri"],
+                    name=r.get("name", ""),
+                    description=r.get("description", ""),
+                    mimeType=r.get("mimeType", "text/plain")
+                ) for r in data["result"]["resources"]]
+                logger.info(f"Found {len(resources)} resources from {self.base_url}")
+                return type('ResourcesResult', (), {'resources': resources})()
+        except Exception as e:
+            logger.warning(f"Bad resources payload from {self.base_url}: {e}")
+        return type('ResourcesResult', (), {'resources': []})()
+    
+    async def call_tool(self, name: str, arguments: Dict[str, Any]):
+        """Call a tool using JSON-RPC with support for both JSON and SSE."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments}
+        }
+        url = self.base_url
+
+        try:
+            # First try plain JSON
+            resp = await self.http_client.post(
+                url, json=payload,
                 headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
             )
-            
-            if response.status_code == 200:
-                data = response.json()
-                if "result" in data:
-                    from mcp.types import TextContent
-                    content = []
-                    for item in data["result"].get("content", []):
-                        if item.get("type") == "text":
-                            content.append(TextContent(type="text", text=item["text"]))
-                    return type('ToolResult', (), {
-                        'content': content,
-                        'isError': data["result"].get("isError", False)
-                    })()
-                else:
-                    from mcp.types import TextContent
-                    return type('ToolResult', (), {
-                        'content': [TextContent(type="text", text=f"Error in response: {data}")],
-                        'isError': True
-                    })()
-            else:
+            if resp.status_code == 200 and resp.headers.get("content-type","").startswith("application/json"):
+                data = resp.json()
+                return self._parse_tool_result(data)
+
+            # Otherwise fall back to SSE streaming
+            async with self.http_client.stream(
+                "POST", url,
+                json=payload,
+                headers={"Content-Type": "application/json", "Accept": "text/event-stream"}
+            ) as s:
+                buf = ""
+                async for chunk in s.aiter_text():
+                    buf += chunk
+                    for line in buf.splitlines():
+                        if line.startswith("data: "):
+                            json_str = line[6:].strip()
+                            try:
+                                import json as _json
+                                data = _json.loads(json_str)
+                                result = self._parse_tool_result(data)
+                                if result:
+                                    return result
+                            except Exception:
+                                continue
+                # No data extracted
                 from mcp.types import TextContent
                 return type('ToolResult', (), {
-                    'content': [TextContent(type="text", text=f"HTTP {response.status_code}: {response.text}")],
+                    'content': [TextContent(type="text", text="No response from tool call")],
                     'isError': True
                 })()
         except Exception as e:
             from mcp.types import TextContent
             return type('ToolResult', (), {
                 'content': [TextContent(type="text", text=f"Error: {str(e)}")],
+                'isError': True
+            })()
+    
+    def _parse_tool_result(self, data):
+        """Parse tool call result from JSON response."""
+        try:
+            if "result" in data:
+                from mcp.types import TextContent
+                content = []
+                for item in data["result"].get("content", []):
+                    if item.get("type") == "text":
+                        content.append(TextContent(type="text", text=item["text"]))
+                return type('ToolResult', (), {
+                    'content': content,
+                    'isError': data["result"].get("isError", False)
+                })()
+            else:
+                from mcp.types import TextContent
+                return type('ToolResult', (), {
+                    'content': [TextContent(type="text", text=f"Error in response: {data}")],
+                    'isError': True
+                })()
+        except Exception as e:
+            from mcp.types import TextContent
+            return type('ToolResult', (), {
+                'content': [TextContent(type="text", text=f"Parse error: {str(e)}")],
                 'isError': True
             })()
     
@@ -319,23 +404,13 @@ class MCPServerConnection:
         # Create HTTP client using official MCP library
         http_client = create_mcp_http_client(headers=headers)
         
-        # Test connection by making a request to the MCP server
-        try:
-            # Try to connect to the MCP server
-            response = await http_client.get(f"{self.config.url}/health")
-            if response.status_code not in [200, 404]:  # 404 is OK if no health endpoint
-                raise Exception(f"Connection test failed: {response.status_code}")
-            
-            logger.info(f"Successfully connected to HTTP MCP server: {self.config.name}")
-        except Exception as e:
-            logger.error(f"Failed to connect to HTTP MCP server {self.config.name}: {e}")
-            raise
+        # Skip health check - go directly to tools/list
+        logger.info(f"Connecting to HTTP MCP server: {self.config.name}")
         
         # For now, we'll create a mock session that implements the MCP interface
         # In a real implementation, you'd need to implement the full MCP protocol over HTTP
         self.session = MockHTTPSession(str(self.config.url), http_client)
-        
-        # List available tools and resources
+        await self.session.initialize()  # <<< important
         await self._list_capabilities()
     
     async def _connect_sse(self):
@@ -358,10 +433,13 @@ class MCPServerConnection:
             resources_result = await self.session.list_resources()
             self.resources = resources_result.resources
             
-            logger.info(
-                f"MCP server {self.config.name} provides {len(self.tools)} tools "
-                f"and {len(self.resources)} resources"
-            )
+            if len(self.tools) == 0:
+                self.connected = False
+                self.last_error = "no tools"
+                logger.warning(f"MCP server {self.config.name} connected but exposes 0 tools; marking unusable")
+            else:
+                self.connected = True
+                logger.info(f"MCP server {self.config.name} usable: {len(self.tools)} tools")
             
         except Exception as e:
             logger.error(f"Failed to list capabilities for {self.config.name}: {e}")
@@ -438,7 +516,7 @@ class MCPManager:
             server_name = list(self.servers.keys())[i]
             if isinstance(result, Exception):
                 logger.error(f"Connection to {server_name} failed: {result}")
-            elif result:
+            elif result and self.servers[server_name].connected:
                 self.connected_servers.append(server_name)
                 successful_connections += 1
         
