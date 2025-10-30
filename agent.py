@@ -5,7 +5,13 @@ import asyncio
 from typing import Dict, List, Any, Optional, TypedDict, Annotated
 from datetime import datetime
 
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage
+from langchain_core.messages import (
+    BaseMessage,
+    HumanMessage,
+    AIMessage,
+    ToolMessage,
+    SystemMessage,
+)
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
@@ -20,6 +26,7 @@ from mcp_manager import MCPManager
 
 class AgentState(TypedDict):
     """State for the audit agent."""
+
     messages: Annotated[List[BaseMessage], "The conversation messages"]
     current_task: str
     audit_code: str
@@ -34,17 +41,17 @@ class AgentState(TypedDict):
 
 class MCPToolWrapper(BaseTool):
     """Wrapper to convert MCP tools to LangChain tools."""
-    
+
     # Pydantic fields
     tool_info: Dict[str, Any]
     mcp_manager: MCPManager
-    
+
     def __init__(self, tool_info: Dict[str, Any], mcp_manager: MCPManager):
         # Extract tool details
         name = tool_info["name"]
         description = tool_info.get("description", f"MCP tool: {name}")
         server = tool_info.get("server", "unknown")
-        
+
         super().__init__(
             name=f"{server}_{name}",
             description=f"[{server}] {description}",
@@ -52,26 +59,24 @@ class MCPToolWrapper(BaseTool):
             tool_info=tool_info,
             mcp_manager=mcp_manager,
         )
-    
+
     def _run(self, **kwargs) -> str:
         """Synchronous run method (not used in async context)."""
         raise NotImplementedError("Use async version")
-    
+
     async def _arun(self, **kwargs) -> str:
         """Async run method."""
         try:
             # Call the MCP tool with server info
             server = self.tool_info.get("server")
             result = await self.mcp_manager.call_tool(
-                self.tool_info["name"], 
-                kwargs,
-                server=server
+                self.tool_info["name"], kwargs, server=server
             )
-            
+
             # Format the result
             if result.get("is_error"):
                 return f"Error: {result['content']}"
-            
+
             # Convert content to string
             content = result.get("content", [])
             if isinstance(content, list):
@@ -84,7 +89,7 @@ class MCPToolWrapper(BaseTool):
                 return "\n".join(text_parts)
             else:
                 return str(content)
-                
+
         except Exception as e:
             logger.error(f"Error calling MCP tool {self.tool_info['name']}: {e}")
             return f"Error calling tool: {str(e)}"
@@ -92,32 +97,33 @@ class MCPToolWrapper(BaseTool):
 
 class AuditAgent:
     """Smart contract audit agent using LangGraph and MCP tools."""
-    
+
     def __init__(self, config: MCPConfig, mcp_manager: Optional[MCPManager] = None):
         self.config = config
         self.agent_config = config.agent
         self.mcp_manager = mcp_manager
-        
+
         # Initialize LLM
         self.llm = self._create_llm()
-        
+
         # Initialize tools
         self.tools: List[BaseTool] = []
         self.tool_node: Optional[ToolNode] = None
-        
+
         # Initialize graph
         self.graph: Optional[StateGraph] = None
         self.app = None
-        
+
         # Memory for conversation
         self.memory = MemorySaver()
-    
+
     def _create_llm(self):
         """Create the LLM instance based on configuration."""
         import os
+
         model_name = self.agent_config.model
         api_key = self._get_api_key()
-        
+
         # Если это OpenRouter (часто содержит '/') или есть OPENROUTER_API_KEY, используем OpenAI-совместимый клиент
         if "/" in model_name or os.getenv("OPENROUTER_API_KEY"):
             return ChatOpenAI(
@@ -151,10 +157,11 @@ class AuditAgent:
                 api_key=api_key,
                 base_url="https://openrouter.ai/api/v1",
             )
-    
+
     def _get_api_key(self) -> str:
         """Get API key for the LLM."""
         import os
+
         name = self.agent_config.model.lower()
 
         # Prefer OpenRouter if model looks like an OpenRouter namespace or the env var is set
@@ -173,16 +180,16 @@ class AuditAgent:
         # Native OpenAI (no OpenRouter)
         api_key = os.getenv("OPENAI_API_KEY", "")
         return api_key or "placeholder-key"
-    
+
     def _setup_tools(self):
         """Setup MCP tools as LangChain tools."""
         if not self.mcp_manager:
             logger.warning("No MCP manager available, using no tools")
             return
-        
+
         # Get available tools from MCP manager
         mcp_tools = self.mcp_manager.get_available_tools()
-        
+
         # Convert to LangChain tools
         self.tools = []
         for tool_info in mcp_tools:
@@ -190,8 +197,10 @@ class AuditAgent:
                 wrapper = MCPToolWrapper(tool_info, self.mcp_manager)
                 self.tools.append(wrapper)
             except Exception as e:
-                logger.error(f"Failed to create tool wrapper for {tool_info['name']}: {e}")
-        
+                logger.error(
+                    f"Failed to create tool wrapper for {tool_info['name']}: {e}"
+                )
+
         # Create tool node and bind tools to LLM
         if self.tools:
             self.tool_node = ToolNode(self.tools)
@@ -201,24 +210,24 @@ class AuditAgent:
         else:
             logger.warning("No MCP tools available")
             self.llm_with_tools = self.llm
-    
+
     def _create_graph(self):
         """Create the LangGraph state graph."""
         if not self.tools:
             logger.warning("No tools available, creating simple graph")
             self._create_simple_graph()
             return
-        
+
         # Create state graph
         self.graph = StateGraph(AgentState)
-        
+
         # Add nodes
         self.graph.add_node("agent", self._agent_node)
         self.graph.add_node("tools", self.tool_node)
-        
+
         # Add edges
         self.graph.add_edge("tools", "agent")
-        
+
         # Add conditional edge from agent
         self.graph.add_conditional_edges(
             "agent",
@@ -226,118 +235,120 @@ class AuditAgent:
             {
                 "continue": "tools",
                 "end": END,
-            }
+            },
         )
-        
+
         # Set entry point
         self.graph.set_entry_point("agent")
-        
+
         # Compile the graph
         self.app = self.graph.compile(checkpointer=self.memory)
-        
+
         logger.info("Created LangGraph with ReAct pattern")
-    
+
     def _create_simple_graph(self):
         """Create a simple graph without tools."""
         self.graph = StateGraph(AgentState)
-        
+
         # Add only agent node
         self.graph.add_node("agent", self._simple_agent_node)
-        
+
         # Add edge to end
         self.graph.add_edge("agent", END)
-        
+
         # Set entry point
         self.graph.set_entry_point("agent")
-        
+
         # Compile the graph
         self.app = self.graph.compile(checkpointer=self.memory)
-        
+
         logger.info("Created simple graph without tools")
-    
+
     async def _agent_node(self, state: AgentState) -> AgentState:
         """Agent node that decides what to do next."""
         messages = state["messages"]
         iteration = state["iteration"]
         max_iterations = state["max_iterations"]
-        
+
         # Check if we've exceeded max iterations
         if iteration >= max_iterations:
             logger.warning(f"Max iterations ({max_iterations}) reached")
             state["error"] = f"Max iterations ({max_iterations}) reached"
             return state
-        
+
         # Create system message with context
         system_message = self._create_system_message(state)
-        
+
         # Prepare messages for LLM
         llm_messages = [system_message] + messages
-        
+
         try:
             # Get response from LLM with tools
             response = await self.llm_with_tools.ainvoke(llm_messages)
-            
+
             # Add AI message to state
             messages.append(response)
             state["messages"] = messages
             state["iteration"] = iteration + 1
-            
+
             # Track tool usage
             if hasattr(response, "tool_calls") and response.tool_calls:
                 for tool_call in response.tool_calls:
                     tool_name = tool_call["name"]
                     if tool_name not in state["tools_used"]:
                         state["tools_used"].append(tool_name)
-            
+
             logger.info(f"Agent iteration {iteration + 1} completed")
-            
+
         except Exception as e:
             logger.error(f"Error in agent node: {e}")
             state["error"] = str(e)
-        
+
         return state
-    
+
     async def _simple_agent_node(self, state: AgentState) -> AgentState:
         """Simple agent node without tools."""
         messages = state["messages"]
-        
+
         # Create system message
         system_message = self._create_system_message(state)
-        
+
         # Prepare messages for LLM
         llm_messages = [system_message] + messages
-        
+
         try:
             # Get response from LLM
             response = await self.llm.ainvoke(llm_messages)
-            
+
             # Add AI message to state
             messages.append(response)
             state["messages"] = messages
-            
+
             # Generate final report
             state["final_report"] = response.content
-            
+
             logger.info("Simple agent completed")
-            
+
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Error in simple agent node: {error_msg}")
-            
+
             # Check if it's an authentication error
             if "authentication" in error_msg.lower() or "api_key" in error_msg.lower():
-                logger.warning("Authentication error detected, this should trigger fallback to direct LLM")
+                logger.warning(
+                    "Authentication error detected, this should trigger fallback to direct LLM"
+                )
                 state["error"] = f"Agent authentication failed: {error_msg}"
             else:
                 state["error"] = error_msg
-        
+
         return state
-    
+
     def _create_system_message(self, state: AgentState) -> BaseMessage:
         """Create system message with context."""
         audit_profile = state["audit_profile"]
         job_id = state["job_id"]
-        
+
         system_prompt = f"""You are an expert smart contract auditor with access to various tools for comprehensive analysis.
 
 TASK: Perform a security audit of the provided smart contract code.
@@ -367,49 +378,54 @@ REPORT FORMAT:
 Be thorough, accurate, and provide actionable recommendations."""
 
         return SystemMessage(content=system_prompt)
-    
+
     def _should_continue(self, state: AgentState) -> str:
         """Decide whether to continue or end."""
         messages = state["messages"]
-        
+
         if not messages:
             return "end"
-        
+
         last_message = messages[-1]
-        
+
         # Check if there's an error
         if state.get("error"):
             return "end"
-        
+
         # Check if we have tool calls
         if hasattr(last_message, "tool_calls") and last_message.tool_calls:
             return "continue"
-        
+
         # Check if we've reached max iterations
         if state["iteration"] >= state["max_iterations"]:
             return "end"
-        
+
         # Check if the agent seems to be done
-        if "final report" in last_message.content.lower() or "audit complete" in last_message.content.lower():
+        if (
+            "final report" in last_message.content.lower()
+            or "audit complete" in last_message.content.lower()
+        ):
             return "end"
-        
+
         # Default to continue for now
         return "continue"
-    
+
     async def audit_contract(
-        self, 
-        code: str, 
-        audit_profile: str, 
+        self,
+        code: str,
+        audit_profile: str,
         job_id: str,
-        additional_context: Optional[Dict[str, Any]] = None
+        additional_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Perform smart contract audit using the agent."""
         logger.info(f"Starting audit for job {job_id} with profile {audit_profile}")
-        
+
         # Initialize state
         initial_state = AgentState(
             messages=[
-                HumanMessage(content=f"Please audit this smart contract code:\n\n```solidity\n{code}\n```")
+                HumanMessage(
+                    content=f"Please audit this smart contract code:\n\n```solidity\n{code}\n```"
+                )
             ],
             current_task="smart_contract_audit",
             audit_code=code,
@@ -421,18 +437,17 @@ Be thorough, accurate, and provide actionable recommendations."""
             final_report=None,
             error=None,
         )
-        
+
         try:
             # Run the agent
             if self.app:
                 # Use thread_id for conversation memory
                 thread_id = f"audit_{job_id}"
-                
+
                 result = await self.app.ainvoke(
-                    initial_state,
-                    config={"configurable": {"thread_id": thread_id}}
+                    initial_state, config={"configurable": {"thread_id": thread_id}}
                 )
-                
+
                 # Extract final report
                 final_report = result.get("final_report", "")
                 if not final_report and result.get("messages"):
@@ -442,10 +457,10 @@ Be thorough, accurate, and provide actionable recommendations."""
                         if isinstance(msg, AIMessage):
                             last_ai_message = msg
                             break
-                    
+
                     if last_ai_message:
                         final_report = last_ai_message.content
-                
+
                 # Calculate metrics
                 metrics = {
                     "calls": len(result.get("tools_used", [])),
@@ -457,7 +472,7 @@ Be thorough, accurate, and provide actionable recommendations."""
                     "iterations": result.get("iteration", 0),
                     "tools_used": result.get("tools_used", []),
                 }
-                
+
                 return {
                     "report": final_report,
                     "metrics": metrics,
@@ -465,7 +480,7 @@ Be thorough, accurate, and provide actionable recommendations."""
                 }
             else:
                 raise Exception("Agent not properly initialized")
-                
+
         except Exception as e:
             logger.error(f"Error during audit: {e}")
             return {
@@ -482,19 +497,19 @@ Be thorough, accurate, and provide actionable recommendations."""
                 },
                 "error": str(e),
             }
-    
+
     async def initialize(self):
         """Initialize the agent."""
         logger.info("Initializing audit agent...")
-        
+
         # Setup tools
         self._setup_tools()
-        
+
         # Create graph
         self._create_graph()
-        
+
         logger.info("Audit agent initialized")
-    
+
     async def cleanup(self):
         """Cleanup agent resources."""
         logger.info("Cleaning up audit agent...")
@@ -511,21 +526,23 @@ async def get_audit_agent() -> Optional[AuditAgent]:
     return audit_agent
 
 
-async def initialize_audit_agent(config: MCPConfig, mcp_manager: Optional[MCPManager] = None) -> AuditAgent:
+async def initialize_audit_agent(
+    config: MCPConfig, mcp_manager: Optional[MCPManager] = None
+) -> AuditAgent:
     """Initialize the global audit agent."""
     global audit_agent
-    
+
     if audit_agent is None:
         audit_agent = AuditAgent(config, mcp_manager)
         await audit_agent.initialize()
-    
+
     return audit_agent
 
 
 async def shutdown_audit_agent():
     """Shutdown the global audit agent."""
     global audit_agent
-    
+
     if audit_agent:
         await audit_agent.cleanup()
         audit_agent = None

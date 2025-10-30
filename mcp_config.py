@@ -6,51 +6,67 @@ from pydantic import BaseModel, Field
 
 class MCPServerConfig(BaseModel):
     """Configuration for a single MCP server."""
-    
+
     name: str = Field(..., description="Unique name for the MCP server")
-    transport: Literal["stdio", "http", "sse"] = Field(..., description="Transport protocol")
-    
+    transport: Literal["stdio", "http", "sse"] = Field(
+        ..., description="Transport protocol"
+    )
+
     # Transport-specific configurations
     cmd: Optional[List[str]] = Field(None, description="Command for stdio transport")
     url: Optional[str] = Field(None, description="URL for http/sse transport")
-    
+
     # Authentication
-    token_env: Optional[str] = Field(None, description="Environment variable name for auth token")
+    token_env: Optional[str] = Field(
+        None, description="Environment variable name for auth token"
+    )
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers")
-    
+
     # Connection settings
     timeout: int = Field(30, description="Connection timeout in seconds")
     retry_attempts: int = Field(3, description="Number of retry attempts")
-    
+
     # Server capabilities
     enabled: bool = Field(True, description="Whether this server is enabled")
-    priority: int = Field(0, description="Priority for tool selection (higher = more priority)")
+    priority: int = Field(
+        0, description="Priority for tool selection (higher = more priority)"
+    )
 
 
 class AgentConfig(BaseModel):
     """Configuration for the agent behavior."""
-    
+
     model: str = Field("anthropic/claude-3.5-sonnet", description="LLM model to use")
     max_tools_per_turn: int = Field(3, description="Maximum tools to use per turn")
     max_iterations: int = Field(10, description="Maximum agent iterations")
     temperature: float = Field(0.1, description="LLM temperature")
     max_tokens: int = Field(8000, description="Maximum tokens per response")
-    
+
     # Agent behavior
     enable_reasoning: bool = Field(True, description="Enable step-by-step reasoning")
-    enable_tool_selection: bool = Field(True, description="Enable automatic tool selection")
-    enable_parallel_tools: bool = Field(False, description="Enable parallel tool execution")
+    enable_tool_selection: bool = Field(
+        True, description="Enable automatic tool selection"
+    )
+    enable_parallel_tools: bool = Field(
+        False, description="Enable parallel tool execution"
+    )
 
 
 class MCPConfig(BaseModel):
     """Main MCP configuration."""
-    
-    servers: List[MCPServerConfig] = Field(default_factory=list, description="List of MCP servers")
-    agent: AgentConfig = Field(default_factory=AgentConfig, description="Agent configuration")
-    
+
+    servers: List[MCPServerConfig] = Field(
+        default_factory=list, description="List of MCP servers"
+    )
+    agent: AgentConfig = Field(
+        default_factory=AgentConfig, description="Agent configuration"
+    )
+
     # Global settings
     enable_mcp: bool = Field(True, description="Enable MCP functionality")
-    fallback_to_direct: bool = Field(True, description="Fallback to direct LLM if MCP fails")
+    fallback_to_direct: bool = Field(
+        True, description="Fallback to direct LLM if MCP fails"
+    )
     debug_mode: bool = Field(False, description="Enable debug logging")
 
 
@@ -69,16 +85,17 @@ DEFAULT_MCP_SERVERS = [
 def load_mcp_config() -> MCPConfig:
     """Load MCP configuration from environment or use defaults."""
     import os
-    
+
     # Get model from environment or use default
     model = os.getenv("OPENROUTER_MODEL", "anthropic/claude-3.5-sonnet")
-    
+
     # For now, return default config
     # In production, this could load from YAML/JSON config files
     return MCPConfig(
         servers=DEFAULT_MCP_SERVERS,
         agent=AgentConfig(model=model),
         enable_mcp=os.getenv("ENABLE_MCP", "true").lower() == "true",
-        fallback_to_direct=os.getenv("MCP_FALLBACK_TO_DIRECT", "true").lower() == "true",
+        fallback_to_direct=os.getenv("MCP_FALLBACK_TO_DIRECT", "true").lower()
+        == "true",
         debug_mode=os.getenv("MCP_DEBUG", "false").lower() == "true",
     )

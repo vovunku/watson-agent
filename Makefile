@@ -30,16 +30,16 @@ help:
 # Development server
 dev:
 	@echo "Starting development server..."
-	UVICORN_RELOAD=1 python -m uvicorn app:app --host 0.0.0.0 --port 8080 --reload
+	UVICORN_RELOAD=1 uv run uvicorn app:app --host 0.0.0.0 --port 8080 --reload
 
 dev-dry:
 	@echo "Starting development server in DRY_RUN mode..."
-	UVICORN_RELOAD=1 DRY_RUN=true python -m uvicorn app:app --host 0.0.0.0 --port 8080 --reload
+	UVICORN_RELOAD=1 DRY_RUN=true uv run uvicorn app:app --host 0.0.0.0 --port 8080 --reload
 
 # Run tests
 test:
 	@echo "Running tests..."
-	pytest tests/ -v --tb=short
+	uv run pytest tests/ -v --tb=short
 
 # Build Docker image
 build:
@@ -75,12 +75,12 @@ stop:
 # Lint code (requires ruff)
 lint:
 	@echo "Running linter..."
-	ruff check .
+	uv run ruff check
 
 # Format code (requires black)
 fmt:
 	@echo "Formatting code..."
-	black .
+	uv run ruff format
 
 # Clean up
 clean:
@@ -95,22 +95,21 @@ clean:
 # Install dependencies
 install:
 	@echo "Installing dependencies..."
-	pip install -r requirements.txt
+	uv sync --no-dev
 
 # Install development dependencies
 install-dev:
 	@echo "Installing development dependencies..."
-	pip install -r requirements.txt
-	pip install ruff black
+	uv sync
 
 # Database operations
 db-init:
 	@echo "Initializing database..."
-	python -c "from db import init_db; init_db()"
+	uv run python -c "from db import init_db; init_db()"
 
 db-migrate:
 	@echo "Running database migrations..."
-	alembic upgrade head
+	uv run alembic upgrade head
 
 # Show logs
 logs:
@@ -135,12 +134,12 @@ test-api:
 # Run integration tests
 test-integration:
 	@echo "Running integration tests..."
-	python test_integration.py --url http://localhost:8081
+	uv run python test_integration.py --url http://localhost:8081
 
 # Run integration tests with custom URL
 test-integration-custom:
 	@echo "Running integration tests with custom URL..."
-	python test_integration.py --url $(URL)
+	uv run python test_integration.py --url $(URL)
 
 # Run quick start demo
 demo:
@@ -150,7 +149,7 @@ demo:
 # Run Python client demo
 demo-python:
 	@echo "Running Python client demo..."
-	python examples/python_client.py
+	uv run python examples/python_client.py
 
 # Full test suite
 test-full: test test-integration

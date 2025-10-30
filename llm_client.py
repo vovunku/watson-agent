@@ -49,33 +49,35 @@ class LLMClient:
     async def close(self):
         """Close HTTP client and cleanup MCP resources."""
         await self.client.aclose()
-        
+
         # Shutdown MCP components
         if self.audit_agent:
             await shutdown_audit_agent()
         if self.mcp_manager:
             await shutdown_mcp_manager()
-    
+
     async def _ensure_agent_initialized(self):
         """Ensure the MCP agent is initialized."""
         if self.agent_initialized:
             return
-        
+
         if not self.mcp_config.enable_mcp:
             logger.info("MCP is disabled, skipping agent initialization")
             self.agent_initialized = True
             return
-        
+
         try:
             # Initialize MCP manager
             self.mcp_manager = await initialize_mcp_manager(self.mcp_config)
-            
+
             # Initialize audit agent
-            self.audit_agent = await initialize_audit_agent(self.mcp_config, self.mcp_manager)
-            
+            self.audit_agent = await initialize_audit_agent(
+                self.mcp_config, self.mcp_manager
+            )
+
             self.agent_initialized = True
             logger.info("MCP agent initialized successfully")
-            
+
         except Exception as e:
             logger.error(f"Failed to initialize MCP agent: {e}")
             if self.mcp_config.fallback_to_direct:
@@ -97,28 +99,30 @@ class LLMClient:
             return await self._generate_dry_run_report(
                 code, audit_profile, job_id, payload
             )
-        
+
         # Try MCP agent first
         if self.mcp_config.enable_mcp:
             try:
                 await self._ensure_agent_initialized()
-                
+
                 if self.audit_agent:
                     logger.info(f"Using MCP agent for job {job_id}")
                     result = await self.audit_agent.audit_contract(
                         code, audit_profile, job_id, payload
                     )
-                    
+
                     if result.get("error"):
                         logger.warning(f"MCP agent error: {result['error']}")
                         if self.mcp_config.fallback_to_direct:
                             logger.info("Falling back to direct LLM call")
-                            return await self._call_openrouter_api(code, audit_profile, job_id)
+                            return await self._call_openrouter_api(
+                                code, audit_profile, job_id
+                            )
                         else:
                             return result["report"], result["metrics"]
                     else:
                         return result["report"], result["metrics"]
-                        
+
             except Exception as e:
                 logger.error(f"MCP agent failed: {e}")
                 if self.mcp_config.fallback_to_direct:
@@ -126,7 +130,7 @@ class LLMClient:
                     return await self._call_openrouter_api(code, audit_profile, job_id)
                 else:
                     raise
-        
+
         # Fallback to direct LLM call
         return await self._call_openrouter_api(code, audit_profile, job_id)
 

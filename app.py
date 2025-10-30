@@ -84,7 +84,7 @@ async def mcp_debug():
     mgr = await get_mcp_manager()
     if not mgr:
         return {"error": "MCP manager not initialized"}
-    
+
     tools = mgr.get_available_tools()
     resources = mgr.get_available_resources()
     return {
@@ -92,7 +92,7 @@ async def mcp_debug():
         "tools": tools,
         "resources": resources,
         "tool_count": len(tools),
-        "resource_count": len(resources)
+        "resource_count": len(resources),
     }
 
 

@@ -357,9 +357,9 @@ while true; do
   STATUS=$(echo $STATUS_RESPONSE | jq -r '.status')
   PHASE=$(echo $STATUS_RESPONSE | jq -r '.progress.phase')
   PERCENT=$(echo $STATUS_RESPONSE | jq -r '.progress.percent')
-  
+
   echo "Status: $STATUS, Phase: $PHASE, Progress: $PERCENT%"
-  
+
   if [ "$STATUS" = "succeeded" ]; then
     echo "Job completed successfully!"
     break
@@ -367,7 +367,7 @@ while true; do
     echo "Job failed with status: $STATUS"
     exit 1
   fi
-  
+
   sleep 2
 done
 
@@ -388,12 +388,12 @@ class AuditAgentClient:
         self.base_url = base_url
         self.session = requests.Session()
         self.session.headers.update({"Content-Type": "application/json"})
-    
+
     def health_check(self):
         """Check service health."""
         response = self.session.get(f"{self.base_url}/healthz")
         return response.json()
-    
+
     def create_job(self, source_code, audit_profile="erc20_basic_v1", **kwargs):
         """Create an audit job."""
         payload = {
@@ -406,12 +406,12 @@ class AuditAgentClient:
         }
         response = self.session.post(f"{self.base_url}/jobs", json=payload)
         return response.json()
-    
+
     def get_job_status(self, job_id):
         """Get job status."""
         response = self.session.get(f"{self.base_url}/jobs/{job_id}")
         return response.json()
-    
+
     def wait_for_completion(self, job_id, timeout=300):
         """Wait for job to complete."""
         start_time = time.time()
@@ -421,7 +421,7 @@ class AuditAgentClient:
                 return status
             time.sleep(2)
         raise TimeoutError("Job did not complete within timeout")
-    
+
     def get_report(self, job_id):
         """Get audit report."""
         response = self.session.get(f"{self.base_url}/jobs/{job_id}/report")
@@ -430,16 +430,16 @@ class AuditAgentClient:
 # Usage example
 if __name__ == "__main__":
     client = AuditAgentClient()
-    
+
     # Check health
     health = client.health_check()
     print(f"Service health: {health}")
-    
+
     # Create job
     source_code = """
     contract VulnerableContract {
         mapping(address => uint256) balances;
-        
+
         function withdraw(uint256 amount) public {
             require(balances[msg.sender] >= amount);
             msg.sender.call{value: amount}("");
@@ -447,20 +447,20 @@ if __name__ == "__main__":
         }
     }
     """
-    
+
     job = client.create_job(
         source_code=source_code,
         audit_profile="erc20_basic_v1",
         idempotency_key="python-demo-123"
     )
-    
+
     job_id = job["job_id"]
     print(f"Created job: {job_id}")
-    
+
     # Wait for completion
     final_status = client.wait_for_completion(job_id)
     print(f"Job completed with status: {final_status['status']}")
-    
+
     # Get report
     if final_status["status"] == "succeeded":
         report = client.get_report(job_id)
@@ -480,12 +480,12 @@ class AuditAgentClient {
             headers: { 'Content-Type': 'application/json' }
         });
     }
-    
+
     async healthCheck() {
         const response = await this.client.get('/healthz');
         return response.data;
     }
-    
+
     async createJob(sourceCode, auditProfile = 'erc20_basic_v1', options = {}) {
         const payload = {
             source: {
@@ -498,12 +498,12 @@ class AuditAgentClient {
         const response = await this.client.post('/jobs', payload);
         return response.data;
     }
-    
+
     async getJobStatus(jobId) {
         const response = await this.client.get(`/jobs/${jobId}`);
         return response.data;
     }
-    
+
     async waitForCompletion(jobId, timeout = 300000) {
         const startTime = Date.now();
         while (Date.now() - startTime < timeout) {
@@ -515,7 +515,7 @@ class AuditAgentClient {
         }
         throw new Error('Job did not complete within timeout');
     }
-    
+
     async getReport(jobId) {
         const response = await this.client.get(`/jobs/${jobId}/report`);
         return response.data;
@@ -525,17 +525,17 @@ class AuditAgentClient {
 // Usage example
 async function main() {
     const client = new AuditAgentClient();
-    
+
     try {
         // Check health
         const health = await client.healthCheck();
         console.log('Service health:', health);
-        
+
         // Create job
         const sourceCode = `
         contract ERC20Token {
             mapping(address => uint256) public balances;
-            
+
             function transfer(address to, uint256 amount) public returns (bool) {
                 require(balances[msg.sender] >= amount);
                 balances[msg.sender] -= amount;
@@ -544,19 +544,19 @@ async function main() {
             }
         }
         `;
-        
+
         const job = await client.createJob(
             sourceCode,
             'erc20_basic_v1',
             { idempotency_key: 'js-demo-123' }
         );
-        
+
         console.log('Created job:', job.job_id);
-        
+
         // Wait for completion
         const finalStatus = await client.waitForCompletion(job.job_id);
         console.log('Job completed with status:', finalStatus.status);
-        
+
         // Get report
         if (finalStatus.status === 'succeeded') {
             const report = await client.getReport(job.job_id);
@@ -672,13 +672,13 @@ async function createJobSafely(client, sourceCode, options = {}) {
         if (error.response) {
             const status = error.response.status;
             const data = error.response.data;
-            
+
             switch (status) {
                 case 409:
                     // Handle duplicate idempotency key
                     console.log(`Job already exists: ${data.existing_job_id}`);
                     return { job_id: data.existing_job_id, status: 'existing' };
-                    
+
                 case 422:
                     // Handle validation errors
                     console.log('Validation errors:');
@@ -686,7 +686,7 @@ async function createJobSafely(client, sourceCode, options = {}) {
                         console.log(`  - ${error.loc.join('.')}: ${error.msg}`);
                     });
                     break;
-                    
+
                 default:
                     console.log(`HTTP error ${status}: ${JSON.stringify(data)}`);
             }

@@ -23,11 +23,12 @@ class TestLLMClient:
     @pytest.fixture
     def llm_client_real(self):
         """Create LLM client with real API key."""
-        with patch("llm_client.settings") as mock_settings, \
-             patch("llm_client.load_mcp_config") as mock_load_config, \
-             patch("llm_client.initialize_mcp_manager") as mock_init_mcp, \
-             patch("llm_client.initialize_audit_agent") as mock_init_agent:
-            
+        with (
+            patch("llm_client.settings") as mock_settings,
+            patch("llm_client.load_mcp_config") as mock_load_config,
+            patch("llm_client.initialize_mcp_manager") as mock_init_mcp,
+            patch("llm_client.initialize_audit_agent") as mock_init_agent,
+        ):
             mock_settings.dry_run = False
             mock_settings.openrouter_api_key = "test-api-key"
             mock_settings.openrouter_model = "anthropic/claude-3.5-sonnet"
@@ -53,9 +54,10 @@ class TestLLMClient:
     @pytest.fixture
     def llm_client_no_mcp(self):
         """Create LLM client with MCP disabled."""
-        with patch("llm_client.settings") as mock_settings, \
-             patch("llm_client.load_mcp_config") as mock_load_config:
-            
+        with (
+            patch("llm_client.settings") as mock_settings,
+            patch("llm_client.load_mcp_config") as mock_load_config,
+        ):
             mock_settings.dry_run = False
             mock_settings.openrouter_api_key = "test-api-key"
             mock_settings.openrouter_model = "anthropic/claude-3.5-sonnet"
@@ -127,20 +129,20 @@ class TestLLMClient:
                 "completion_tokens": 200,
                 "elapsed_sec": 1.5,
                 "model": "anthropic/claude-3.5-sonnet",
-                "cost_usd": 0.01
+                "cost_usd": 0.01,
             },
-            "error": None
+            "error": None,
         }
 
         # Mock the audit agent's audit_contract method
         mock_audit_agent = AsyncMock()
         mock_audit_agent.audit_contract = AsyncMock(return_value=mock_agent_result)
-        
+
         # Mock _ensure_agent_initialized to set our mock agent
         async def mock_ensure_agent_initialized():
             llm_client_real.audit_agent = mock_audit_agent
             llm_client_real.agent_initialized = True
-        
+
         llm_client_real._ensure_agent_initialized = mock_ensure_agent_initialized
 
         report, metrics = await llm_client_real.analyze_code(
@@ -171,19 +173,26 @@ class TestLLMClient:
         # Mock agent failure
         mock_agent_result = {
             "report": "Agent failed",
-            "metrics": {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "elapsed_sec": 0.0, "model": "test", "cost_usd": 0.0},
-            "error": "Agent authentication failed"
+            "metrics": {
+                "calls": 0,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "elapsed_sec": 0.0,
+                "model": "test",
+                "cost_usd": 0.0,
+            },
+            "error": "Agent authentication failed",
         }
 
         # Mock the audit agent to fail
         mock_audit_agent = AsyncMock()
         mock_audit_agent.audit_contract = AsyncMock(return_value=mock_agent_result)
-        
+
         # Mock _ensure_agent_initialized to set our mock agent
         async def mock_ensure_agent_initialized():
             llm_client_real.audit_agent = mock_audit_agent
             llm_client_real.agent_initialized = True
-        
+
         llm_client_real._ensure_agent_initialized = mock_ensure_agent_initialized
 
         # Mock direct LLM fallback
@@ -221,13 +230,15 @@ class TestLLMClient:
 
         # Mock agent to raise exception
         mock_audit_agent = AsyncMock()
-        mock_audit_agent.audit_contract = AsyncMock(side_effect=Exception("Agent failed"))
-        
+        mock_audit_agent.audit_contract = AsyncMock(
+            side_effect=Exception("Agent failed")
+        )
+
         # Mock _ensure_agent_initialized to set our mock agent
         async def mock_ensure_agent_initialized():
             llm_client_real.audit_agent = mock_audit_agent
             llm_client_real.agent_initialized = True
-        
+
         llm_client_real._ensure_agent_initialized = mock_ensure_agent_initialized
 
         # Mock direct LLM fallback to also fail
